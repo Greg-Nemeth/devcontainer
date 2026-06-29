@@ -25,6 +25,24 @@ type DevContainerConfig struct {
 	PostStartCommand     interface{}            `json:"postStartCommand,omitempty"`
 	PostAttachCommand    interface{}            `json:"postAttachCommand,omitempty"`
 	OnCreateCommand      interface{}            `json:"onCreateCommand,omitempty"`
+
+	// Accumulated/merged fields from image metadata
+	PostCreateCommands    []interface{} `json:"postCreateCommands,omitempty"`
+	UpdateContentCommands []interface{} `json:"updateContentCommands,omitempty"`
+	PostStartCommands     []interface{} `json:"postStartCommands,omitempty"`
+	PostAttachCommands    []interface{} `json:"postAttachCommands,omitempty"`
+	OnCreateCommands      []interface{} `json:"onCreateCommands,omitempty"`
+
+	Customizations map[string]interface{} `json:"customizations,omitempty"`
+	Entrypoint     string                 `json:"entrypoint,omitempty"`
+	Entrypoints    []string               `json:"entrypoints,omitempty"`
+	RemoteUser     string                 `json:"remoteUser,omitempty"`
+	ContainerUser  string                 `json:"containerUser,omitempty"`
+	UserEnvProbe   string                 `json:"userEnvProbe,omitempty"`
+	Privileged     bool                   `json:"privileged,omitempty"`
+	CapAdd         []string               `json:"capAdd,omitempty"`
+	SecurityOpt    []string               `json:"securityOpt,omitempty"`
+	Init           bool                   `json:"init,omitempty"`
 }
 
 func stripComments(input string) string {
