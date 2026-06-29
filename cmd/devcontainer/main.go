@@ -1,10 +1,15 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 
+	"github.com/devcontainers/dc/pkg/cli"
+	"github.com/devcontainers/dc/pkg/config"
+	"github.com/devcontainers/dc/pkg/docker"
 	"github.com/spf13/cobra"
 )
 
@@ -52,8 +57,69 @@ func newRootCommand() *cobra.Command {
 			}
 			return nil
 		},
-		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Println("Running up...")
+		RunE: func(cmd *cobra.Command, args []string) error {
+			wsFolder := opts.workspaceFolder
+			if wsFolder == "" {
+				var err error
+				wsFolder, err = os.Getwd()
+				if err != nil {
+					return err
+				}
+			}
+			wsFolder, _ = filepath.Abs(wsFolder)
+
+			// 1. Find and parse devcontainer config
+			cfgPath := opts.configPath
+			if cfgPath == "" {
+				p1 := filepath.Join(wsFolder, ".devcontainer", "devcontainer.json")
+				p2 := filepath.Join(wsFolder, ".devcontainer.json")
+				if _, err := os.Stat(p1); err == nil {
+					cfgPath = p1
+				} else if _, err := os.Stat(p2); err == nil {
+					cfgPath = p2
+				}
+			}
+
+			var baseImage string
+			var onCreateCmd, postCreateCmd interface{}
+			if cfgPath != "" {
+				data, err := os.ReadFile(cfgPath)
+				if err != nil {
+					return err
+				}
+				parsed, err := config.Parse(string(data))
+				if err != nil {
+					return err
+				}
+				baseImage = parsed.Image
+				onCreateCmd = parsed.OnCreateCommand
+				postCreateCmd = parsed.PostCreateCommand
+			}
+
+			if baseImage == "" {
+				baseImage = "ubuntu:latest" // Default fallback
+			}
+
+			// 2. Initialize Docker CLI client
+			dockerPath := opts.dockerPath
+			if dockerPath == "" {
+				dockerPath = "docker" // Default
+			}
+			dCli := docker.NewCLI(dockerPath, opts.dockerComposePath, nil)
+
+			// 3. Trigger up workflow
+			cName := fmt.Sprintf("devcontainer-%s", filepath.Base(wsFolder))
+			upOpts := cli.UpOptions{
+				DockerCLI:         dCli,
+				WorkspaceFolder:   wsFolder,
+				ContainerName:     cName,
+				BaseImage:         baseImage,
+				OnCreateCommand:   onCreateCmd,
+				PostCreateCommand: postCreateCmd,
+			}
+
+			fmt.Printf("Orchestrating up workflow for container: %s...\n", cName)
+			return cli.RunUp(upOpts)
 		},
 	}
 
@@ -68,16 +134,80 @@ func newRootCommand() *cobra.Command {
 	execCmd := &cobra.Command{
 		Use:   "exec [cmd] [args...]",
 		Short: "Execute a command on a running dev container",
-		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Println("Running exec...")
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return fmt.Errorf("command and arguments must be supplied")
+			}
+			wsFolder := opts.workspaceFolder
+			if wsFolder == "" {
+				var err error
+				wsFolder, err = os.Getwd()
+				if err != nil {
+					return err
+				}
+			}
+			wsFolder, _ = filepath.Abs(wsFolder)
+
+			dockerPath := opts.dockerPath
+			if dockerPath == "" {
+				dockerPath = "docker"
+			}
+			dCli := docker.NewCLI(dockerPath, opts.dockerComposePath, nil)
+
+			cName := fmt.Sprintf("devcontainer-%s", filepath.Base(wsFolder))
+			execOpts := cli.ExecOptions{
+				DockerCLI:     dCli,
+				ContainerName: cName,
+				Command:       args,
+			}
+
+			fmt.Printf("Executing command inside container %s: %v...\n", cName, args)
+			return cli.RunExec(execOpts)
 		},
 	}
 
 	readConfigCmd := &cobra.Command{
 		Use:   "read-configuration",
 		Short: "Read configuration",
-		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Println("Running read-configuration...")
+		RunE: func(cmd *cobra.Command, args []string) error {
+			wsFolder := opts.workspaceFolder
+			if wsFolder == "" {
+				var err error
+				wsFolder, err = os.Getwd()
+				if err != nil {
+					return err
+				}
+			}
+			wsFolder, _ = filepath.Abs(wsFolder)
+
+			cfgPath := opts.configPath
+			if cfgPath == "" {
+				p1 := filepath.Join(wsFolder, ".devcontainer", "devcontainer.json")
+				p2 := filepath.Join(wsFolder, ".devcontainer.json")
+				if _, err := os.Stat(p1); err == nil {
+					cfgPath = p1
+				} else if _, err := os.Stat(p2); err == nil {
+					cfgPath = p2
+				}
+			}
+
+			if cfgPath == "" {
+				return fmt.Errorf("no devcontainer.json configuration file found in workspace")
+			}
+
+			data, err := os.ReadFile(cfgPath)
+			if err != nil {
+				return err
+			}
+
+			parsed, err := config.Parse(string(data))
+			if err != nil {
+				return err
+			}
+
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			return enc.Encode(parsed)
 		},
 	}
 

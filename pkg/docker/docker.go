@@ -91,3 +91,8 @@ func (c *CLI) ComposeUp(composeFiles []string, projectName string) error {
 	_, err := c.runner(c.ComposePath, args...)
 	return err
 }
+
+func (c *CLI) ExecCommand(id string, cmd []string) ([]byte, error) {
+	args := append([]string{"exec", id}, cmd...)
+	return c.runner(c.CLIPath, args...)
+}
