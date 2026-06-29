@@ -63,7 +63,7 @@ func TestRunUpWorkflow(t *testing.T) {
 	expectedCalls := [][]string{
 		{"podman", "inspect", "non-existent-container"},
 		{"podman", "inspect", "ubuntu:latest"},
-		{"podman", "run", "-d", "--name", "non-existent-container", "ubuntu:latest"},
+		{"podman", "run", "-d", "--name", "non-existent-container", "ubuntu:latest", "sh", "-c", "echo Container started; trap \"exit 0\" 15; while sleep 1 & wait $!; do :; done"},
 		{"podman", "exec", "non-existent-container", "sh", "-c", "echo creating"},
 		{"podman", "exec", "non-existent-container", "touch", "/done.txt"},
 	}

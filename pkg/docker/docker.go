@@ -120,3 +120,8 @@ func (c *CLI) ExecCommand(id string, cmd []string) ([]byte, error) {
 	args := append([]string{"exec", id}, cmd...)
 	return c.runner(c.CLIPath, args...)
 }
+
+func (c *CLI) PullImage(imageName string) error {
+	_, err := c.runner(c.CLIPath, "pull", imageName)
+	return err
+}

@@ -52,10 +52,13 @@ func RunUp(opts UpOptions) error {
 	containerExists := err == nil
 
 	if !containerExists {
-		// 2. Inspect base image
+		// 2. Inspect base image (and pull if not present)
 		_, err = opts.DockerCLI.InspectImage(opts.BaseImage)
 		if err != nil {
-			return fmt.Errorf("failed to inspect base image %s: %w", opts.BaseImage, err)
+			fmt.Printf("Base image %s not found locally. Pulling...\n", opts.BaseImage)
+			if pullErr := opts.DockerCLI.PullImage(opts.BaseImage); pullErr != nil {
+				return fmt.Errorf("failed to pull base image %s: %w (inspect error: %v)", opts.BaseImage, pullErr, err)
+			}
 		}
 
 		// 3. Configure RunOptions with mounts and env
@@ -81,7 +84,8 @@ func RunUp(opts UpOptions) error {
 			}
 		}
 
-		// Run container
+		// Run container with standard keep-alive command
+		runOpts.Cmd = []string{"sh", "-c", "echo Container started; trap \"exit 0\" 15; while sleep 1 & wait $!; do :; done"}
 		_, err = opts.DockerCLI.RunContainer(runOpts)
 		if err != nil {
 			return fmt.Errorf("failed to start container %s: %w", opts.ContainerName, err)
