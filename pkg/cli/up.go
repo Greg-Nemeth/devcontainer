@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/devcontainers/dc/pkg/docker"
+	"github.com/devcontainers/dc/pkg/utils"
 )
 
 type UpOptions struct {
@@ -66,14 +67,16 @@ func RunUp(opts UpOptions) error {
 
 		// Expose SSH Agent socket if present
 		if sshAuthSock := os.Getenv("SSH_AUTH_SOCK"); sshAuthSock != "" {
-			runOpts.Mounts = append(runOpts.Mounts, fmt.Sprintf("type=bind,source=%s,target=/tmp/vscode-ssh-auth.sock", sshAuthSock))
+			translatedSSH := utils.TranslateWSLPath(sshAuthSock)
+			runOpts.Mounts = append(runOpts.Mounts, fmt.Sprintf("type=bind,source=%s,target=/tmp/vscode-ssh-auth.sock", translatedSSH))
 			runOpts.Env["SSH_AUTH_SOCK"] = "/tmp/vscode-ssh-auth.sock"
 		}
 
 		// Expose GPG Agent socket if present
 		if gpgSock := gpgAgentSocketDetector(); gpgSock != "" {
 			if _, err := os.Stat(gpgSock); err == nil {
-				runOpts.Mounts = append(runOpts.Mounts, fmt.Sprintf("type=bind,source=%s,target=/tmp/gpg-agent.sock", gpgSock))
+				translatedGPG := utils.TranslateWSLPath(gpgSock)
+				runOpts.Mounts = append(runOpts.Mounts, fmt.Sprintf("type=bind,source=%s,target=/tmp/gpg-agent.sock", translatedGPG))
 				runOpts.Env["GPG_AGENT_SOCK"] = "/tmp/gpg-agent.sock"
 			}
 		}
