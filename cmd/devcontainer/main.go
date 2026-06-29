@@ -211,11 +211,45 @@ func newRootCommand() *cobra.Command {
 		},
 	}
 
+	var serverType string
+	injectServerCmd := &cobra.Command{
+		Use:   "inject-server",
+		Short: "Inject and run a headless IDE server inside the container",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			wsFolder := opts.workspaceFolder
+			if wsFolder == "" {
+				var err error
+				wsFolder, err = os.Getwd()
+				if err != nil {
+					return err
+				}
+			}
+			wsFolder, _ = filepath.Abs(wsFolder)
+
+			dockerPath := opts.dockerPath
+			if dockerPath == "" {
+				dockerPath = "docker"
+			}
+			dCli := docker.NewCLI(dockerPath, opts.dockerComposePath, nil)
+
+			cName := fmt.Sprintf("devcontainer-%s", filepath.Base(wsFolder))
+
+			if serverType == "" {
+				serverType = "openvscode"
+			}
+
+			fmt.Printf("Injecting %s headless server inside container %s...\n", serverType, cName)
+			return cli.InjectHeadlessServer(dCli, cName, serverType)
+		},
+	}
+	injectServerCmd.Flags().StringVar(&serverType, "type", "openvscode", "IDE Server type (openvscode, jetbrains)")
+
 	// Add subcommands
 	rootCmd.AddCommand(upCmd)
 	rootCmd.AddCommand(buildCmd)
 	rootCmd.AddCommand(execCmd)
 	rootCmd.AddCommand(readConfigCmd)
+	rootCmd.AddCommand(injectServerCmd)
 
 	return rootCmd
 }

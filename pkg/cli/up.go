@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/devcontainers/dc/pkg/docker"
 )
@@ -56,11 +57,28 @@ func RunUp(opts UpOptions) error {
 			return fmt.Errorf("failed to inspect base image %s: %w", opts.BaseImage, err)
 		}
 
-		// 3. Run container
+		// 3. Configure RunOptions with mounts and env
 		runOpts := docker.RunOptions{
 			Image: opts.BaseImage,
 			Name:  opts.ContainerName,
+			Env:   make(map[string]string),
 		}
+
+		// Expose SSH Agent socket if present
+		if sshAuthSock := os.Getenv("SSH_AUTH_SOCK"); sshAuthSock != "" {
+			runOpts.Mounts = append(runOpts.Mounts, fmt.Sprintf("type=bind,source=%s,target=/tmp/vscode-ssh-auth.sock", sshAuthSock))
+			runOpts.Env["SSH_AUTH_SOCK"] = "/tmp/vscode-ssh-auth.sock"
+		}
+
+		// Expose GPG Agent socket if present
+		if gpgSock := gpgAgentSocketDetector(); gpgSock != "" {
+			if _, err := os.Stat(gpgSock); err == nil {
+				runOpts.Mounts = append(runOpts.Mounts, fmt.Sprintf("type=bind,source=%s,target=/tmp/gpg-agent.sock", gpgSock))
+				runOpts.Env["GPG_AGENT_SOCK"] = "/tmp/gpg-agent.sock"
+			}
+		}
+
+		// Run container
 		_, err = opts.DockerCLI.RunContainer(runOpts)
 		if err != nil {
 			return fmt.Errorf("failed to start container %s: %w", opts.ContainerName, err)

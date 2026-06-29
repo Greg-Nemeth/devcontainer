@@ -2,7 +2,9 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/devcontainers/dc/pkg/docker"
@@ -29,6 +31,12 @@ func (m *mockDockerRunner) Run(path string, args ...string) ([]byte, error) {
 }
 
 func TestRunUpWorkflow(t *testing.T) {
+	// Clear environment for deterministic test
+	os.Setenv("SSH_AUTH_SOCK", "")
+	oldDetector := gpgAgentSocketDetector
+	gpgAgentSocketDetector = func() string { return "" }
+	defer func() { gpgAgentSocketDetector = oldDetector }()
+
 	runner := &mockDockerRunner{}
 	dockerCLI := docker.NewCLI("podman", "", runner.Run)
 
@@ -103,5 +111,63 @@ func TestRunExec(t *testing.T) {
 
 	if !reflect.DeepEqual(interactiveArgs, expectedCalls) {
 		t.Errorf("Expected interactive args %v, got %v", expectedCalls, interactiveArgs)
+	}
+}
+
+func TestRunUpWorkflowWithSockets(t *testing.T) {
+	// Create a temporary file to act as the GPG socket path so os.Stat succeeds
+	tmpFile, err := os.CreateTemp("", "mock-gpg-socket-*")
+	if err != nil {
+		t.Fatalf("Failed to create mock socket file: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+	tmpFile.Close()
+
+	os.Setenv("SSH_AUTH_SOCK", "/tmp/mock-ssh-agent.sock")
+	oldDetector := gpgAgentSocketDetector
+	gpgAgentSocketDetector = func() string { return tmpFile.Name() }
+	defer func() { gpgAgentSocketDetector = oldDetector }()
+
+	runner := &mockDockerRunner{}
+	dockerCLI := docker.NewCLI("podman", "", runner.Run)
+
+	opts := UpOptions{
+		DockerCLI:       dockerCLI,
+		WorkspaceFolder: "/my-workspace",
+		ContainerName:   "non-existent-container",
+		BaseImage:       "ubuntu:latest",
+	}
+
+	err = RunUp(opts)
+	if err != nil {
+		t.Fatalf("RunUp returned unexpected error: %v", err)
+	}
+
+	// Verify podman run args contain mounts and environment variables
+	runCallFound := false
+	for _, call := range runner.commandsRun {
+		if len(call) > 1 && call[1] == "run" {
+			runCallFound = true
+			// Check SSH mounts
+			mountsStr := strings.Join(call, " ")
+			if !strings.Contains(mountsStr, "type=bind,source=/tmp/mock-ssh-agent.sock,target=/tmp/vscode-ssh-auth.sock") {
+				t.Errorf("Expected podman run command to contain SSH socket mount, got: %v", call)
+			}
+			if !strings.Contains(mountsStr, "-e SSH_AUTH_SOCK=/tmp/vscode-ssh-auth.sock") {
+				t.Errorf("Expected podman run command to contain SSH env var, got: %v", call)
+			}
+
+			// Check GPG mounts
+			if !strings.Contains(mountsStr, "type=bind,source="+tmpFile.Name()+",target=/tmp/gpg-agent.sock") {
+				t.Errorf("Expected podman run command to contain GPG socket mount, got: %v", call)
+			}
+			if !strings.Contains(mountsStr, "-e GPG_AGENT_SOCK=/tmp/gpg-agent.sock") {
+				t.Errorf("Expected podman run command to contain GPG env var, got: %v", call)
+			}
+		}
+	}
+
+	if !runCallFound {
+		t.Fatal("Expected podman run command call, none found")
 	}
 }
