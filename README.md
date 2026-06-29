@@ -11,10 +11,23 @@ The main objectives of this project are:
 
 ---
 
+## Features Matrix (Parity Status)
+
+The Go CLI (`dc`) supports the following capabilities to reach near-complete parity with the TypeScript CLI:
+* **OCI Features Downloader**: Pulls Features dynamically from public registries (such as `ghcr.io`), resolves Bearer tokens automatically, and extracts gzipped tarballs.
+* **Dev Container Templates**: Scaffolds full developer project environments dynamically from OCI template repositories, resolving template placeholder options (`${templateOption:value}`) inside config files.
+* **Interactive Terminal & Signal Forwarding**: Runs fully interactive shells inside containers (supporting arrow keys, tab completions, and text editors like Vim) by placing the terminal in raw mode and forwarding window resize events (`SIGWINCH`).
+* **Headless IDE Server Injection**: Installs and starts headless servers (like OpenVSCode Server or JetBrains Projector) inside running containers.
+* **SSH & GPG Agent Forwarding**: Dynamically maps host agent sockets inside containers using bind mounts and env injection to relay commit signatures and Git authentication safely.
+* **WSL Path Translation**: Detects WSL and automatically translates Linux paths under `/mnt/` (e.g. `/mnt/c/project`) to Windows host formats (`C:\project`) for Docker/Podman Desktop compatibility.
+* **Docker Compose Overlays**: Orchestrates compose services and dynamically compiles compose override overlay files, with built-in array-to-map conversions for Podman build arguments.
+
+---
+
 ## Installation
 
 ### From GitHub Release/CI Artifacts
-1. Go to the Actions run artifacts page on GitHub.
+1. Go to the Releases page or Actions run artifacts page on GitHub.
 2. Download the pre-built `devcontainer-linux-amd64` binary.
 3. Extract and make the binary executable:
    ```bash
@@ -49,6 +62,7 @@ You can supply global and command-specific configuration parameters via flags:
 - `--override-config`: Path to a config file containing overrides for the base configurations.
 - `--log-level`: Set severity of logs (e.g. `info`, `debug`, `trace`).
 - `--log-format`: Output logs in either `text` (default) or `json` formats.
+- `--docker-path`: Custom path to the Docker or Podman CLI executable.
 
 ---
 
@@ -56,26 +70,36 @@ You can supply global and command-specific configuration parameters via flags:
 
 Run `devcontainer --help` or `devcontainer [command] --help` to see complete instructions and available flags.
 
-### 1. Build a Dev Container Image
-Builds a dev container image as defined by the workspace configurations:
+### 1. Scaffold a Project from a Template
+Scaffolds a new project from a public dev container template repository, substituting template options:
 ```bash
-devcontainer build --workspace-folder /home/user/myproject
+mkdir -p /tmp/my-go-project
+devcontainer templates apply \
+  --template ghcr.io/devcontainers/templates/go:1 \
+  --workspace-folder /tmp/my-go-project \
+  --option goVersion=1.21
 ```
 
 ### 2. Create and Run a Dev Container (`up`)
-Provision and start a dev container for your workspace:
+Provision and start a dev container for your workspace. This automatically detects and mounts your host GPG/SSH agent sockets, and translates paths if executing inside WSL:
 ```bash
 devcontainer up --workspace-folder /home/user/myproject --id-label app=development
 ```
 
-### 3. Run Commands Inside the Container (`exec`)
-Execute a shell command inside your running dev container:
+### 3. Run Interactive Commands Inside the Container (`exec`)
+Execute an interactive shell session with full arrow keys, terminal resize event relay, and tab completions:
 ```bash
-devcontainer exec --workspace-folder /home/user/myproject -- whoami
+devcontainer exec --workspace-folder /home/user/myproject -- /bin/bash
 ```
 
-### 4. Inspect Dev Container Configurations
-Read and inspect resolved configurations for verification:
+### 4. Inject a Headless IDE Server
+Download, extract, and start a headless IDE server inside a running container:
+```bash
+devcontainer inject-server --workspace-folder /home/user/myproject --type openvscode
+```
+
+### 5. Inspect Dev Container Configurations
+Read and inspect resolved configurations with comments stripped for validation:
 ```bash
 devcontainer read-configuration --workspace-folder /home/user/myproject
 ```
