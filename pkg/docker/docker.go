@@ -7,11 +7,13 @@ import (
 )
 
 type RunnerFunc func(path string, args ...string) ([]byte, error)
+type InteractiveRunnerFunc func(path string, args ...string) error
 
 type CLI struct {
-	CLIPath     string
-	ComposePath string
-	runner      RunnerFunc
+	CLIPath           string
+	ComposePath       string
+	runner            RunnerFunc
+	interactiveRunner InteractiveRunnerFunc
 }
 
 type RunOptions struct {
@@ -27,6 +29,11 @@ func DefaultRunner(path string, args ...string) ([]byte, error) {
 	return cmd.CombinedOutput()
 }
 
+func defaultInteractiveRunner(path string, args ...string) error {
+	cmd := exec.Command(path, args...)
+	return RunInteractiveSubprocess(cmd)
+}
+
 func NewCLI(cliPath, composePath string, runner RunnerFunc) *CLI {
 	if runner == nil {
 		runner = DefaultRunner
@@ -38,10 +45,27 @@ func NewCLI(cliPath, composePath string, runner RunnerFunc) *CLI {
 		composePath = "docker-compose"
 	}
 	return &CLI{
-		CLIPath:     cliPath,
-		ComposePath: composePath,
-		runner:      runner,
+		CLIPath:           cliPath,
+		ComposePath:       composePath,
+		runner:            runner,
+		interactiveRunner: defaultInteractiveRunner,
 	}
+}
+
+func (c *CLI) SetInteractiveRunner(r InteractiveRunnerFunc) {
+	c.interactiveRunner = r
+}
+
+func (c *CLI) ExecInteractive(containerID string, cmd []string) error {
+	var args []string
+	if IsStdinTerminal() {
+		args = append(args, "exec", "-it", containerID)
+	} else {
+		args = append(args, "exec", "-i", containerID)
+	}
+	args = append(args, cmd...)
+
+	return c.interactiveRunner(c.CLIPath, args...)
 }
 
 func (c *CLI) InspectContainer(id string) ([]byte, error) {

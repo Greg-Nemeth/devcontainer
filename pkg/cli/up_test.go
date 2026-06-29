@@ -77,6 +77,12 @@ func TestRunExec(t *testing.T) {
 	runner := &mockDockerRunner{}
 	dockerCLI := docker.NewCLI("docker", "", runner.Run)
 
+	var interactiveArgs []string
+	dockerCLI.SetInteractiveRunner(func(path string, args ...string) error {
+		interactiveArgs = append([]string{path}, args...)
+		return nil
+	})
+
 	opts := ExecOptions{
 		DockerCLI:     dockerCLI,
 		ContainerName: "my-running-container",
@@ -88,15 +94,14 @@ func TestRunExec(t *testing.T) {
 		t.Fatalf("RunExec returned unexpected error: %v", err)
 	}
 
-	expectedCalls := [][]string{
-		{"docker", "exec", "my-running-container", "uname", "-a"},
+	var expectedCalls []string
+	if docker.IsStdinTerminal() {
+		expectedCalls = []string{"docker", "exec", "-it", "my-running-container", "uname", "-a"}
+	} else {
+		expectedCalls = []string{"docker", "exec", "-i", "my-running-container", "uname", "-a"}
 	}
 
-	if len(runner.commandsRun) != 1 {
-		t.Fatalf("Expected 1 docker call, got %d", len(runner.commandsRun))
-	}
-
-	if !reflect.DeepEqual(runner.commandsRun[0], expectedCalls[0]) {
-		t.Errorf("Expected call %v, got %v", expectedCalls[0], runner.commandsRun[0])
+	if !reflect.DeepEqual(interactiveArgs, expectedCalls) {
+		t.Errorf("Expected interactive args %v, got %v", expectedCalls, interactiveArgs)
 	}
 }

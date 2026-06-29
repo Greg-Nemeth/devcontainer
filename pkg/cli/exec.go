@@ -1,6 +1,8 @@
 package cli
 
-import "github.com/devcontainers/dc/pkg/docker"
+import (
+	"github.com/devcontainers/dc/pkg/docker"
+)
 
 type ExecOptions struct {
 	DockerCLI     *docker.CLI
@@ -9,6 +11,5 @@ type ExecOptions struct {
 }
 
 func RunExec(opts ExecOptions) error {
-	_, err := opts.DockerCLI.ExecCommand(opts.ContainerName, opts.Command)
-	return err
+	return opts.DockerCLI.ExecInteractive(opts.ContainerName, opts.Command)
 }
