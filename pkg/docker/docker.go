@@ -60,14 +60,14 @@ func (c *CLI) RunContainer(opts RunOptions) ([]byte, error) {
 	for _, m := range opts.Mounts {
 		args = append(args, "--mount", m)
 	}
-	
+
 	// Deterministic sorting of env keys for tests
 	var envKeys []string
 	for k := range opts.Env {
 		envKeys = append(envKeys, k)
 	}
 	sort.Strings(envKeys)
-	
+
 	for _, k := range envKeys {
 		args = append(args, "-e", fmt.Sprintf("%s=%s", k, opts.Env[k]))
 	}

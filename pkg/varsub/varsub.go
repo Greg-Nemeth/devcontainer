@@ -192,21 +192,21 @@ func devcontainerIdForLabels(idLabels map[string]string) string {
 	if idLabels == nil {
 		idLabels = make(map[string]string)
 	}
-	
+
 	// Double check sorting to be absolutely sure
 	keys := make([]string, 0, len(idLabels))
 	for k := range idLabels {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	
+
 	// Build sorted json
 	var parts []string
 	for _, k := range keys {
 		parts = append(parts, fmt.Sprintf("%q:%q", k, idLabels[k]))
 	}
 	stringInput := "{" + strings.Join(parts, ",") + "}"
-	
+
 	hash := sha256.Sum256([]byte(stringInput))
 	val := new(big.Int).SetBytes(hash[:])
 	id := val.Text(32)

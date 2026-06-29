@@ -8,7 +8,7 @@ import (
 
 func TestCLICommandsRegistered(t *testing.T) {
 	rootCmd := newRootCommand()
-	
+
 	subcommands := []string{"up", "build", "exec", "read-configuration"}
 	for _, sub := range subcommands {
 		found := false
@@ -47,7 +47,7 @@ func TestCLIIdLabelValidation(t *testing.T) {
 	buf := new(bytes.Buffer)
 	rootCmd.SetOut(buf)
 	rootCmd.SetErr(buf)
-	
+
 	// Test invalid id-label format (missing equals sign)
 	rootCmd.SetArgs([]string{"up", "--id-label", "invalidlabelformat"})
 	err := rootCmd.Execute()

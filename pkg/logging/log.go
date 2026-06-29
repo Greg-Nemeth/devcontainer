@@ -130,7 +130,7 @@ func colorizePlainText(text string) string {
 	// Colorize numbers inside plain text
 	// regex matches digits (optionally with dot-separated sub-parts) not surrounded by alphanumeric characters or dashes/underscores
 	numRegex := regexp.MustCompile(`(?i)(?:^|[^A-Za-z0-9_\-\.])[0-9]+(?:\.[0-9]+)*(?:$|[^A-Za-z0-9_\-\.])`)
-	
+
 	return numRegex.ReplaceAllStringFunc(text, func(m string) string {
 		// Find start and end of actual digits
 		start := 0
