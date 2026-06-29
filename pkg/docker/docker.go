@@ -1,0 +1,93 @@
+package docker
+
+import (
+	"fmt"
+	"os/exec"
+	"sort"
+)
+
+type RunnerFunc func(path string, args ...string) ([]byte, error)
+
+type CLI struct {
+	CLIPath     string
+	ComposePath string
+	runner      RunnerFunc
+}
+
+type RunOptions struct {
+	Image  string
+	Name   string
+	Mounts []string
+	Env    map[string]string
+	Cmd    []string
+}
+
+func DefaultRunner(path string, args ...string) ([]byte, error) {
+	cmd := exec.Command(path, args...)
+	return cmd.CombinedOutput()
+}
+
+func NewCLI(cliPath, composePath string, runner RunnerFunc) *CLI {
+	if runner == nil {
+		runner = DefaultRunner
+	}
+	if cliPath == "" {
+		cliPath = "docker"
+	}
+	if composePath == "" {
+		composePath = "docker-compose"
+	}
+	return &CLI{
+		CLIPath:     cliPath,
+		ComposePath: composePath,
+		runner:      runner,
+	}
+}
+
+func (c *CLI) InspectContainer(id string) ([]byte, error) {
+	return c.runner(c.CLIPath, "inspect", id)
+}
+
+func (c *CLI) InspectImage(name string) ([]byte, error) {
+	return c.runner(c.CLIPath, "inspect", name)
+}
+
+func (c *CLI) RunContainer(opts RunOptions) ([]byte, error) {
+	args := []string{"run", "-d"}
+	if opts.Name != "" {
+		args = append(args, "--name", opts.Name)
+	}
+	for _, m := range opts.Mounts {
+		args = append(args, "--mount", m)
+	}
+	
+	// Deterministic sorting of env keys for tests
+	var envKeys []string
+	for k := range opts.Env {
+		envKeys = append(envKeys, k)
+	}
+	sort.Strings(envKeys)
+	
+	for _, k := range envKeys {
+		args = append(args, "-e", fmt.Sprintf("%s=%s", k, opts.Env[k]))
+	}
+
+	args = append(args, opts.Image)
+	args = append(args, opts.Cmd...)
+
+	return c.runner(c.CLIPath, args...)
+}
+
+func (c *CLI) ComposeUp(composeFiles []string, projectName string) error {
+	var args []string
+	for _, f := range composeFiles {
+		args = append(args, "-f", f)
+	}
+	if projectName != "" {
+		args = append(args, "-p", projectName)
+	}
+	args = append(args, "up", "-d")
+
+	_, err := c.runner(c.ComposePath, args...)
+	return err
+}

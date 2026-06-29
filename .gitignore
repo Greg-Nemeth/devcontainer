@@ -1,0 +1,7 @@
+# Upstream devcontainers repositories
+/spec
+/cli
+
+# Built binaries
+/devcontainer
+/devcontainer.exe
