@@ -10,7 +10,10 @@ import (
 	"github.com/devcontainers/dc/pkg/cli"
 	"github.com/devcontainers/dc/pkg/config"
 	"github.com/devcontainers/dc/pkg/docker"
+	"github.com/devcontainers/dc/pkg/features"
+	"github.com/devcontainers/dc/pkg/templates"
 	"github.com/spf13/cobra"
+	"strings"
 )
 
 var idLabelRegex = regexp.MustCompile(`^[^=]+=[^=]+$`)
@@ -244,12 +247,126 @@ func newRootCommand() *cobra.Command {
 	}
 	injectServerCmd.Flags().StringVar(&serverType, "type", "openvscode", "IDE Server type (openvscode, jetbrains)")
 
+	var templateID string
+	var templateOptions []string
+
+	templatesCmd := &cobra.Command{
+		Use:   "templates",
+		Short: "Manage dev container templates",
+	}
+
+	templatesApplyCmd := &cobra.Command{
+		Use:   "apply",
+		Short: "Apply a template to a workspace folder",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			wsFolder := opts.workspaceFolder
+			if wsFolder == "" {
+				var err error
+				wsFolder, err = os.Getwd()
+				if err != nil {
+					return err
+				}
+			}
+			wsFolder, _ = filepath.Abs(wsFolder)
+
+			if templateID == "" {
+				return fmt.Errorf("--template is required")
+			}
+
+			// Parse options into map
+			optMap := make(map[string]string)
+			for _, opt := range templateOptions {
+				parts := strings.SplitN(opt, "=", 2)
+				if len(parts) == 2 {
+					optMap[parts[0]] = parts[1]
+				}
+			}
+
+			// Parse OCI template ref
+			ref, err := templates.ParseTemplateRef(templateID)
+			if err != nil {
+				return err
+			}
+
+			fmt.Printf("Fetching template %s...\n", templateID)
+
+			tmpDir, err := os.MkdirTemp("", "dc-template-download-*")
+			if err != nil {
+				return err
+			}
+			defer os.RemoveAll(tmpDir)
+
+			client := features.NewOCIClient(nil)
+			manifest, err := client.FetchManifest(features.FeatureRef{
+				Registry:  ref.Registry,
+				Namespace: ref.Namespace,
+				ID:        ref.ID,
+				Version:   ref.Version,
+			})
+			if err != nil {
+				return fmt.Errorf("failed to fetch template manifest: %w", err)
+			}
+
+			if len(manifest.Layers) == 0 {
+				return fmt.Errorf("no layers found in template manifest")
+			}
+
+			// Download first layer blob (tar.gz)
+			tarGzPath := filepath.Join(tmpDir, "layer.tar.gz")
+			f, err := os.Create(tarGzPath)
+			if err != nil {
+				return err
+			}
+
+			err = client.DownloadBlob(features.FeatureRef{
+				Registry:  ref.Registry,
+				Namespace: ref.Namespace,
+				ID:        ref.ID,
+				Version:   ref.Version,
+			}, manifest.Layers[0].Digest, f)
+			f.Close()
+			if err != nil {
+				return fmt.Errorf("failed to download template layer: %w", err)
+			}
+
+			// Extract tarball
+			unpackedDir := filepath.Join(tmpDir, "unpacked")
+			os.MkdirAll(unpackedDir, 0755)
+
+			fRead, err := os.Open(tarGzPath)
+			if err != nil {
+				return err
+			}
+			err = features.ExtractTarGz(fRead, unpackedDir)
+			fRead.Close()
+			if err != nil {
+				return fmt.Errorf("failed to extract template tarball: %w", err)
+			}
+
+			// Apply template
+			fmt.Printf("Applying template to %s...\n", wsFolder)
+			err = templates.ApplyTemplate(unpackedDir, wsFolder, optMap)
+			if err != nil {
+				return fmt.Errorf("failed to apply template: %w", err)
+			}
+
+			fmt.Println("Template applied successfully!")
+			return nil
+		},
+	}
+
+	templatesApplyCmd.Flags().StringVar(&templateID, "template", "", "Template ID (e.g. ghcr.io/devcontainers/templates/go:1)")
+	templatesApplyCmd.Flags().StringSliceVar(&templateOptions, "option", nil, "Template options (e.g. goVersion=1.21)")
+
+	templatesCmd.AddCommand(templatesApplyCmd)
+
 	// Add subcommands
 	rootCmd.AddCommand(upCmd)
 	rootCmd.AddCommand(buildCmd)
 	rootCmd.AddCommand(execCmd)
 	rootCmd.AddCommand(readConfigCmd)
 	rootCmd.AddCommand(injectServerCmd)
+	rootCmd.AddCommand(templatesCmd)
 
 	return rootCmd
 }
