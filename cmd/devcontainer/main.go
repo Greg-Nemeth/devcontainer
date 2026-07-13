@@ -85,6 +85,8 @@ func newRootCommand() *cobra.Command {
 
 			var baseImage string
 			var onCreateCmd, postCreateCmd interface{}
+			var dockerComposeFile interface{}
+			var service string
 			if cfgPath != "" {
 				data, err := os.ReadFile(cfgPath)
 				if err != nil {
@@ -97,6 +99,8 @@ func newRootCommand() *cobra.Command {
 				baseImage = parsed.Image
 				onCreateCmd = parsed.OnCreateCommand
 				postCreateCmd = parsed.PostCreateCommand
+				dockerComposeFile = parsed.DockerComposeFile
+				service = parsed.Service
 			}
 
 			if baseImage == "" {
@@ -119,6 +123,9 @@ func newRootCommand() *cobra.Command {
 				BaseImage:         baseImage,
 				OnCreateCommand:   onCreateCmd,
 				PostCreateCommand: postCreateCmd,
+				DockerComposeFile: dockerComposeFile,
+				Service:           service,
+				ConfigPath:        cfgPath,
 			}
 
 			fmt.Printf("Orchestrating up workflow for container: %s...\n", cName)
@@ -158,13 +165,18 @@ func newRootCommand() *cobra.Command {
 			dCli := docker.NewCLI(dockerPath, opts.dockerComposePath, nil)
 
 			cName := fmt.Sprintf("devcontainer-%s", filepath.Base(wsFolder))
+			targetContainer, err := cli.ResolveContainerName(wsFolder, opts.configPath, cName, dCli)
+			if err != nil {
+				return err
+			}
+
 			execOpts := cli.ExecOptions{
 				DockerCLI:     dCli,
-				ContainerName: cName,
+				ContainerName: targetContainer,
 				Command:       args,
 			}
 
-			fmt.Printf("Executing command inside container %s: %v...\n", cName, args)
+			fmt.Printf("Executing command inside container %s: %v...\n", targetContainer, args)
 			return cli.RunExec(execOpts)
 		},
 	}
@@ -236,13 +248,17 @@ func newRootCommand() *cobra.Command {
 			dCli := docker.NewCLI(dockerPath, opts.dockerComposePath, nil)
 
 			cName := fmt.Sprintf("devcontainer-%s", filepath.Base(wsFolder))
+			targetContainer, err := cli.ResolveContainerName(wsFolder, opts.configPath, cName, dCli)
+			if err != nil {
+				return err
+			}
 
 			if serverType == "" {
 				serverType = "openvscode"
 			}
 
-			fmt.Printf("Injecting %s headless server inside container %s...\n", serverType, cName)
-			return cli.InjectHeadlessServer(dCli, cName, serverType)
+			fmt.Printf("Injecting %s headless server inside container %s...\n", serverType, targetContainer)
+			return cli.InjectHeadlessServer(dCli, targetContainer, serverType)
 		},
 	}
 	injectServerCmd.Flags().StringVar(&serverType, "type", "openvscode", "IDE Server type (openvscode, jetbrains)")

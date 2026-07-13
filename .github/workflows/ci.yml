@@ -29,15 +29,23 @@ jobs:
       - name: Run Tests
         run: go test -v ./...
 
-      - name: Build Binary (linux/amd64)
+      - name: Build Binaries (linux/amd64 & linux/arm64)
         run: |
           GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o devcontainer-linux-amd64 ./cmd/devcontainer/main.go
+          GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o devcontainer-linux-arm64 ./cmd/devcontainer/main.go
 
-      - name: Upload Artifact
+      - name: Upload Artifact (linux/amd64)
         uses: actions/upload-artifact@v4
         with:
           name: devcontainer-linux-amd64
           path: devcontainer-linux-amd64
+          if-no-files-found: error
+
+      - name: Upload Artifact (linux/arm64)
+        uses: actions/upload-artifact@v4
+        with:
+          name: devcontainer-linux-arm64
+          path: devcontainer-linux-arm64
           if-no-files-found: error
 
   release:
@@ -48,16 +56,24 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Download Artifacts
+      - name: Download Artifact (linux/amd64)
         uses: actions/download-artifact@v4
         with:
           name: devcontainer-linux-amd64
           path: .
 
+      - name: Download Artifact (linux/arm64)
+        uses: actions/download-artifact@v4
+        with:
+          name: devcontainer-linux-arm64
+          path: .
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: devcontainer-linux-amd64
+          files: |
+            devcontainer-linux-amd64
+            devcontainer-linux-arm64
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
