@@ -19,7 +19,7 @@ type BuildOptions struct {
 	MetadataLabel string
 }
 
-func getSafeID(str string) string {
+func GetSafeID(str string) string {
 	// Replaces [^\w_] with _
 	reg1 := regexp.MustCompile(`[^\w_]`)
 	res := reg1.ReplaceAllString(str, "_")
@@ -41,7 +41,7 @@ func GenerateDockerfile(opts BuildOptions) (string, error) {
 	// 2. Set environment variables from options
 	// 3. Execute install.sh
 	for _, feat := range opts.Features {
-		safeID := getSafeID(feat.ID)
+		safeID := GetSafeID(feat.ID)
 		destPath := fmt.Sprintf("/tmp/features/%s", safeID)
 
 		builder.WriteString(fmt.Sprintf("COPY features/%s %s\n", safeID, destPath))

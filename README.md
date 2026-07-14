@@ -14,7 +14,7 @@ The main objectives of this project are:
 ## Features Matrix (Parity Status)
 
 The Go CLI (`dc`) supports the following capabilities to reach near-complete parity with the TypeScript CLI:
-* **OCI Features Downloader**: Pulls Features dynamically from public registries (such as `ghcr.io`), resolves Bearer tokens automatically, and extracts gzipped tarballs.
+* **OCI Features Downloader & Layering**: Pulls Features dynamically from public registries (such as `ghcr.io`), resolves Bearer tokens automatically, extracts gzipped tarballs, and builds/layers them into the final dev container image (supporting both single-container and docker-compose configurations via compose overrides).
 * **Dev Container Templates**: Scaffolds full developer project environments dynamically from OCI template repositories, resolving template placeholder options (`${templateOption:value}`) inside config files.
 * **Interactive Terminal & Signal Forwarding**: Runs fully interactive shells inside containers (supporting arrow keys, tab completions, and text editors like Vim) by placing the terminal in raw mode and forwarding window resize events (`SIGWINCH`).
 * **Headless IDE Server Injection**: Installs and starts headless servers (like OpenVSCode Server or JetBrains Projector) inside running containers.

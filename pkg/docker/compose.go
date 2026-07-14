@@ -73,3 +73,18 @@ func (c *CLI) GetComposeServiceContainer(composeFiles []string, projectName stri
 
 	return "", nil
 }
+
+func (c *CLI) ComposeConfig(composeFiles []string) (string, error) {
+	var args []string
+	for _, f := range composeFiles {
+		args = append(args, "-f", f)
+	}
+	args = append(args, "config")
+
+	output, err := c.runner(c.ComposePath, args...)
+	if err != nil {
+		return "", err
+	}
+	return string(output), nil
+}
+

@@ -1,13 +1,19 @@
 package cli
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/devcontainers/dc/pkg/docker"
+	"github.com/devcontainers/dc/pkg/features"
 )
 
 type mockDockerRunner struct {
@@ -27,6 +33,13 @@ func (m *mockDockerRunner) Run(path string, args ...string) ([]byte, error) {
 		// Mock image inspect (returns dummy config)
 		return []byte(`[{"Id": "sha256:12345", "Config": {"Labels": {}}}]`), nil
 	}
+
+	for _, arg := range args {
+		if arg == "config" {
+			return []byte("services:\n  db:\n    image: alpine:latest\n"), nil
+		}
+	}
+
 	return []byte("mock-output"), nil
 }
 
@@ -169,5 +182,308 @@ func TestRunUpWorkflowWithSockets(t *testing.T) {
 
 	if !runCallFound {
 		t.Fatal("Expected podman run command call, none found")
+	}
+}
+
+func TestRunUpWorkflowWithFeatures(t *testing.T) {
+	// Create dummy tarball bytes representing feature payload
+	var tarballBuf bytes.Buffer
+	gw := gzip.NewWriter(&tarballBuf)
+	tw := tar.NewWriter(gw)
+
+	// Add install.sh
+	installShContent := "echo 'installing feature'"
+	hdr1 := &tar.Header{
+		Name: "install.sh",
+		Mode: 0755,
+		Size: int64(len(installShContent)),
+	}
+	if err := tw.WriteHeader(hdr1); err != nil {
+		t.Fatalf("Failed to write install.sh header: %v", err)
+	}
+	if _, err := tw.Write([]byte(installShContent)); err != nil {
+		t.Fatalf("Failed to write install.sh content: %v", err)
+	}
+
+	// Add devcontainer-feature.json
+	metaContent := `{"id": "git", "installsAfter": []}`
+	hdr2 := &tar.Header{
+		Name: "devcontainer-feature.json",
+		Mode: 0644,
+		Size: int64(len(metaContent)),
+	}
+	if err := tw.WriteHeader(hdr2); err != nil {
+		t.Fatalf("Failed to write metadata header: %v", err)
+	}
+	if _, err := tw.Write([]byte(metaContent)); err != nil {
+		t.Fatalf("Failed to write metadata content: %v", err)
+	}
+
+	tw.Close()
+	gw.Close()
+
+	tarballBytes := tarballBuf.Bytes()
+
+	// Start local mock registry server
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Mock token auth challenge
+		if r.URL.Path != "/token" && r.Header.Get("Authorization") == "" {
+			w.Header().Set("Www-Authenticate", `Bearer realm="http://`+r.Host+`/token",service="mock-registry",scope="repository:devcontainers/features/git:pull"`)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		if r.URL.Path == "/token" {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"token": "mock-access-token"}`))
+			return
+		}
+
+		if strings.Contains(r.URL.Path, "/manifests/") {
+			w.Header().Set("Content-Type", features.OciManifestMediaType)
+			w.Write([]byte(`{
+				"schemaVersion": 2,
+				"mediaType": "application/vnd.oci.image.manifest.v1+json",
+				"layers": [
+					{
+						"mediaType": "application/vnd.devcontainers.layer.v1+tar+gzip",
+						"digest": "sha256:abc123digest",
+						"size": 1234
+					}
+				]
+			}`))
+			return
+		}
+
+		if strings.Contains(r.URL.Path, "/blobs/") {
+			w.Header().Set("Content-Type", "application/octet-stream")
+			w.Write(tarballBytes)
+			return
+		}
+
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	urlHost := strings.TrimPrefix(server.URL, "http://")
+
+	os.Setenv("SSH_AUTH_SOCK", "")
+	oldDetector := gpgAgentSocketDetector
+	gpgAgentSocketDetector = func() string { return "" }
+	defer func() { gpgAgentSocketDetector = oldDetector }()
+
+	runner := &mockDockerRunner{}
+	dockerCLI := docker.NewCLI("podman", "", runner.Run)
+
+	featureRef := urlHost + "/devcontainers/features/git:1"
+	opts := UpOptions{
+		DockerCLI:       dockerCLI,
+		WorkspaceFolder: "/my-workspace",
+		ContainerName:   "non-existent-container",
+		BaseImage:       "ubuntu:latest",
+		Features: map[string]interface{}{
+			featureRef: map[string]interface{}{
+				"version": "latest",
+			},
+		},
+	}
+
+	err := RunUp(opts)
+	if err != nil {
+		t.Fatalf("RunUp with features failed: %v", err)
+	}
+
+	// Verify command sequence includes build and run commands using the layered features image
+	buildCallFound := false
+	runCallFound := false
+
+	for _, call := range runner.commandsRun {
+		if len(call) > 1 && call[1] == "build" {
+			buildCallFound = true
+			// Check image tagging target
+			tagFound := false
+			for i, arg := range call {
+				if arg == "-t" && i+1 < len(call) && call[i+1] == "non-existent-container-features" {
+					tagFound = true
+				}
+			}
+			if !tagFound {
+				t.Errorf("Expected podman build to tag target image 'non-existent-container-features', got: %v", call)
+			}
+		}
+
+		if len(call) > 1 && call[1] == "run" {
+			runCallFound = true
+			// Ensure it runs with the layered features image
+			imageFound := false
+			for _, arg := range call {
+				if arg == "non-existent-container-features" {
+					imageFound = true
+				}
+			}
+			if !imageFound {
+				t.Errorf("Expected podman run to use 'non-existent-container-features' image, got: %v", call)
+			}
+		}
+	}
+
+	if !buildCallFound {
+		t.Fatal("Expected podman build command call, none found")
+	}
+	if !runCallFound {
+		t.Fatal("Expected podman run command call, none found")
+	}
+}
+
+func TestRunUpWorkflowComposeWithFeatures(t *testing.T) {
+	// Create dummy tarball bytes representing feature payload
+	var tarballBuf bytes.Buffer
+	gw := gzip.NewWriter(&tarballBuf)
+	tw := tar.NewWriter(gw)
+
+	// Add install.sh
+	installShContent := "echo 'installing feature'"
+	hdr1 := &tar.Header{
+		Name: "install.sh",
+		Mode: 0755,
+		Size: int64(len(installShContent)),
+	}
+	tw.WriteHeader(hdr1)
+	tw.Write([]byte(installShContent))
+
+	// Add devcontainer-feature.json
+	metaContent := `{"id": "git", "installsAfter": []}`
+	hdr2 := &tar.Header{
+		Name: "devcontainer-feature.json",
+		Mode: 0644,
+		Size: int64(len(metaContent)),
+	}
+	tw.WriteHeader(hdr2)
+	tw.Write([]byte(metaContent))
+
+	tw.Close()
+	gw.Close()
+
+	tarballBytes := tarballBuf.Bytes()
+
+	// Start local mock registry server
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Mock token auth challenge
+		if r.URL.Path != "/token" && r.Header.Get("Authorization") == "" {
+			w.Header().Set("Www-Authenticate", `Bearer realm="http://`+r.Host+`/token",service="mock-registry",scope="repository:devcontainers/features/git:pull"`)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		if r.URL.Path == "/token" {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"token": "mock-access-token"}`))
+			return
+		}
+
+		if strings.Contains(r.URL.Path, "/manifests/") {
+			w.Header().Set("Content-Type", features.OciManifestMediaType)
+			w.Write([]byte(`{
+				"schemaVersion": 2,
+				"mediaType": "application/vnd.oci.image.manifest.v1+json",
+				"layers": [
+					{
+						"mediaType": "application/vnd.devcontainers.layer.v1+tar+gzip",
+						"digest": "sha256:abc123digest",
+						"size": 1234
+					}
+				]
+			}`))
+			return
+		}
+
+		if strings.Contains(r.URL.Path, "/blobs/") {
+			w.Header().Set("Content-Type", "application/octet-stream")
+			w.Write(tarballBytes)
+			return
+		}
+
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	urlHost := strings.TrimPrefix(server.URL, "http://")
+
+	os.Setenv("SSH_AUTH_SOCK", "")
+	oldDetector := gpgAgentSocketDetector
+	gpgAgentSocketDetector = func() string { return "" }
+	defer func() { gpgAgentSocketDetector = oldDetector }()
+
+	runner := &mockDockerRunner{}
+	dockerCLI := docker.NewCLI("podman", "podman-compose", runner.Run)
+
+	featureRef := urlHost + "/devcontainers/features/git:1"
+	opts := UpOptions{
+		DockerCLI:         dockerCLI,
+		WorkspaceFolder:   "/my-workspace",
+		ContainerName:     "my-container",
+		BaseImage:         "ubuntu:latest",
+		DockerComposeFile: "docker-compose.yml",
+		Service:           "db",
+		ConfigPath:        "/my-workspace/devcontainer.json",
+		Features: map[string]interface{}{
+			featureRef: map[string]interface{}{
+				"version": "latest",
+			},
+		},
+	}
+
+	err := RunUp(opts)
+	if err != nil {
+		t.Fatalf("RunUp with features failed: %v", err)
+	}
+
+	// Verify build features layered image was triggered
+	buildCallFound := false
+	composeUpCallFound := false
+
+	for _, call := range runner.commandsRun {
+		if len(call) > 1 && call[1] == "build" {
+			buildCallFound = true
+			tagFound := false
+			for i, arg := range call {
+				if arg == "-t" && i+1 < len(call) && call[i+1] == "my-container-features" {
+					tagFound = true
+				}
+			}
+			if !tagFound {
+				t.Errorf("Expected build command to tag target image 'my-container-features', got: %v", call)
+			}
+		}
+
+		isComposeUp := false
+		for _, arg := range call {
+			if arg == "up" {
+				isComposeUp = true
+				break
+			}
+		}
+
+		if isComposeUp {
+			// Podman compose up args: [podman-compose -f /my-workspace/docker-compose.yml -f /tmp/... -p my-workspace up -d]
+			composeUpCallFound = true
+			// Check that two -f arguments are supplied
+			fCount := 0
+			for _, arg := range call {
+				if arg == "-f" {
+					fCount++
+				}
+			}
+			if fCount != 2 {
+				t.Errorf("Expected compose up command to use 2 -f flags, got: %d in %v", fCount, call)
+			}
+		}
+	}
+
+	if !buildCallFound {
+		t.Fatal("Expected podman build command call, none found")
+	}
+	if !composeUpCallFound {
+		t.Fatal("Expected compose up command call, none found")
 	}
 }

@@ -90,6 +90,7 @@ func newRootCommand() *cobra.Command {
 			var mounts []string
 			var workspaceMount string
 			var remoteUser string
+			var features map[string]interface{}
 
 			if cfgPath != "" {
 				data, err := os.ReadFile(cfgPath)
@@ -109,6 +110,7 @@ func newRootCommand() *cobra.Command {
 				dockerComposeFile = parsed.DockerComposeFile
 				service = parsed.Service
 				remoteUser = parsed.RemoteUser
+				features = parsed.Features
 
 				for _, m := range parsed.Mounts {
 					if s, ok := m.(string); ok {
@@ -170,6 +172,7 @@ func newRootCommand() *cobra.Command {
 				Mounts:                   mounts,
 				WorkspaceMount:           workspaceMount,
 				RemoteUser:               remoteUser,
+				Features:                 features,
 			}
 
 			fmt.Printf("Orchestrating up workflow for container: %s...\n", cName)
