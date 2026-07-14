@@ -56,13 +56,20 @@ func (c *CLI) SetInteractiveRunner(r InteractiveRunnerFunc) {
 	c.interactiveRunner = r
 }
 
-func (c *CLI) ExecInteractive(containerID string, cmd []string) error {
+func (c *CLI) ExecInteractive(containerID string, user string, workDir string, cmd []string) error {
 	var args []string
 	if IsStdinTerminal() {
-		args = append(args, "exec", "-it", containerID)
+		args = append(args, "exec", "-it")
 	} else {
-		args = append(args, "exec", "-i", containerID)
+		args = append(args, "exec", "-i")
 	}
+	if user != "" {
+		args = append(args, "-u", user)
+	}
+	if workDir != "" {
+		args = append(args, "-w", workDir)
+	}
+	args = append(args, containerID)
 	args = append(args, cmd...)
 
 	return c.interactiveRunner(c.CLIPath, args...)
@@ -118,6 +125,20 @@ func (c *CLI) ComposeUp(composeFiles []string, projectName string) error {
 
 func (c *CLI) ExecCommand(id string, cmd []string) ([]byte, error) {
 	args := append([]string{"exec", id}, cmd...)
+	return c.runner(c.CLIPath, args...)
+}
+
+func (c *CLI) ExecCommandWithUser(id string, user string, workDir string, cmd []string) ([]byte, error) {
+	var args []string
+	args = append(args, "exec")
+	if user != "" {
+		args = append(args, "-u", user)
+	}
+	if workDir != "" {
+		args = append(args, "-w", workDir)
+	}
+	args = append(args, id)
+	args = append(args, cmd...)
 	return c.runner(c.CLIPath, args...)
 }
 

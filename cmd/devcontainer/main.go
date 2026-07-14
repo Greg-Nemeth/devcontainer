@@ -87,6 +87,10 @@ func newRootCommand() *cobra.Command {
 			var onCreateCmd, postCreateCmd interface{}
 			var dockerComposeFile interface{}
 			var service string
+			var mounts []string
+			var workspaceMount string
+			var remoteUser string
+
 			if cfgPath != "" {
 				data, err := os.ReadFile(cfgPath)
 				if err != nil {
@@ -96,11 +100,32 @@ func newRootCommand() *cobra.Command {
 				if err != nil {
 					return err
 				}
+
+				parsed.SubstituteVariables(wsFolder, cfgPath)
+
 				baseImage = parsed.Image
 				onCreateCmd = parsed.OnCreateCommand
 				postCreateCmd = parsed.PostCreateCommand
 				dockerComposeFile = parsed.DockerComposeFile
 				service = parsed.Service
+				remoteUser = parsed.RemoteUser
+
+				for _, m := range parsed.Mounts {
+					if s, ok := m.(string); ok {
+						mounts = append(mounts, s)
+					}
+				}
+
+				workspaceMount = parsed.WorkspaceMount
+				if workspaceMount == "" {
+					wsFolderTarget := parsed.WorkspaceFolder
+					if wsFolderTarget == "" {
+						wsFolderTarget = "/workspace"
+					}
+					workspaceMount = fmt.Sprintf("type=bind,source=%s,target=%s", wsFolder, wsFolderTarget)
+				}
+			} else {
+				workspaceMount = fmt.Sprintf("type=bind,source=%s,target=/workspace", wsFolder)
 			}
 
 			if baseImage == "" {
@@ -116,16 +141,35 @@ func newRootCommand() *cobra.Command {
 
 			// 3. Trigger up workflow
 			cName := fmt.Sprintf("devcontainer-%s", filepath.Base(wsFolder))
+			containerWorkspaceFolder := "/workspace"
+			if cfgPath != "" {
+				// We already parsed config, let's extract parsed.WorkspaceFolder
+				data, err := os.ReadFile(cfgPath)
+				if err == nil {
+					parsed, err := config.Parse(string(data))
+					if err == nil {
+						parsed.SubstituteVariables(wsFolder, cfgPath)
+						if parsed.WorkspaceFolder != "" {
+							containerWorkspaceFolder = parsed.WorkspaceFolder
+						}
+					}
+				}
+			}
+
 			upOpts := cli.UpOptions{
-				DockerCLI:         dCli,
-				WorkspaceFolder:   wsFolder,
-				ContainerName:     cName,
-				BaseImage:         baseImage,
-				OnCreateCommand:   onCreateCmd,
-				PostCreateCommand: postCreateCmd,
-				DockerComposeFile: dockerComposeFile,
-				Service:           service,
-				ConfigPath:        cfgPath,
+				DockerCLI:                dCli,
+				WorkspaceFolder:          wsFolder,
+				ContainerWorkspaceFolder: containerWorkspaceFolder,
+				ContainerName:            cName,
+				BaseImage:                baseImage,
+				OnCreateCommand:          onCreateCmd,
+				PostCreateCommand:        postCreateCmd,
+				DockerComposeFile:        dockerComposeFile,
+				Service:                  service,
+				ConfigPath:               cfgPath,
+				Mounts:                   mounts,
+				WorkspaceMount:           workspaceMount,
+				RemoteUser:               remoteUser,
 			}
 
 			fmt.Printf("Orchestrating up workflow for container: %s...\n", cName)
@@ -170,10 +214,41 @@ func newRootCommand() *cobra.Command {
 				return err
 			}
 
+			// Parse devcontainer.json to get remoteUser
+			cfgPath := opts.configPath
+			if cfgPath == "" {
+				p1 := filepath.Join(wsFolder, ".devcontainer", "devcontainer.json")
+				p2 := filepath.Join(wsFolder, ".devcontainer.json")
+				if _, err := os.Stat(p1); err == nil {
+					cfgPath = p1
+				} else if _, err := os.Stat(p2); err == nil {
+					cfgPath = p2
+				}
+			}
+
+			var remoteUser string
+			var containerWorkspaceFolder string
+			if cfgPath != "" {
+				data, err := os.ReadFile(cfgPath)
+				if err == nil {
+					parsed, err := config.Parse(string(data))
+					if err == nil {
+						parsed.SubstituteVariables(wsFolder, cfgPath)
+						remoteUser = parsed.RemoteUser
+						containerWorkspaceFolder = parsed.WorkspaceFolder
+					}
+				}
+			}
+			if containerWorkspaceFolder == "" {
+				containerWorkspaceFolder = "/workspace"
+			}
+
 			execOpts := cli.ExecOptions{
-				DockerCLI:     dCli,
-				ContainerName: targetContainer,
-				Command:       args,
+				DockerCLI:                dCli,
+				ContainerName:            targetContainer,
+				User:                     remoteUser,
+				ContainerWorkspaceFolder: containerWorkspaceFolder,
+				Command:                  args,
 			}
 
 			fmt.Printf("Executing command inside container %s: %v...\n", targetContainer, args)

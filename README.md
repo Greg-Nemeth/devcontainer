@@ -21,6 +21,7 @@ The Go CLI (`dc`) supports the following capabilities to reach near-complete par
 * **SSH & GPG Agent Forwarding**: Dynamically maps host agent sockets inside containers using bind mounts and env injection to relay commit signatures and Git authentication safely.
 * **WSL Path Translation**: Detects WSL and automatically translates Linux paths under `/mnt/` (e.g. `/mnt/c/project`) to Windows host formats (`C:\project`) for Docker/Podman Desktop compatibility.
 * **Docker Compose Overlays**: Orchestrates compose services and dynamically compiles compose override overlay files, with built-in array-to-map conversions for Podman build arguments.
+* **Workspace Mount & Non-Root User Configuration**: Resolves and binds workspace folders using config settings (like `workspaceMount`), executes container startup lifecycles and exec shells under specified workspace directories, and supports executing commands as non-root container users via `remoteUser`.
 
 ---
 

@@ -5,11 +5,13 @@ import (
 )
 
 type ExecOptions struct {
-	DockerCLI     *docker.CLI
-	ContainerName string
-	Command       []string
+	DockerCLI                *docker.CLI
+	ContainerName            string
+	User                     string
+	ContainerWorkspaceFolder string
+	Command                  []string
 }
 
 func RunExec(opts ExecOptions) error {
-	return opts.DockerCLI.ExecInteractive(opts.ContainerName, opts.Command)
+	return opts.DockerCLI.ExecInteractive(opts.ContainerName, opts.User, opts.ContainerWorkspaceFolder, opts.Command)
 }

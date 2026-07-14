@@ -2,7 +2,10 @@ package config
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
+
+	"github.com/devcontainers/dc/pkg/varsub"
 )
 
 type DevContainerConfig struct {
@@ -12,6 +15,7 @@ type DevContainerConfig struct {
 	DockerComposeFile    interface{}            `json:"dockerComposeFile,omitempty"` // string or []string
 	Service              string                 `json:"service,omitempty"`
 	WorkspaceFolder      string                 `json:"workspaceFolder,omitempty"`
+	WorkspaceMount       string                 `json:"workspaceMount,omitempty"`
 	ShutdownAction       string                 `json:"shutdownAction,omitempty"`
 	ForwardPorts         []int                  `json:"forwardPorts,omitempty"`
 	PortsAttributes      map[string]interface{} `json:"portsAttributes,omitempty"`
@@ -132,6 +136,9 @@ func Merge(base, override *DevContainerConfig) *DevContainerConfig {
 	if override.WorkspaceFolder != "" {
 		merged.WorkspaceFolder = override.WorkspaceFolder
 	}
+	if override.WorkspaceMount != "" {
+		merged.WorkspaceMount = override.WorkspaceMount
+	}
 	if override.ShutdownAction != "" {
 		merged.ShutdownAction = override.ShutdownAction
 	}
@@ -194,3 +201,110 @@ func Merge(base, override *DevContainerConfig) *DevContainerConfig {
 
 	return &merged
 }
+
+func (cfg *DevContainerConfig) SubstituteVariables(wsFolder string, cfgPath string) {
+	// Build Env map
+	envMap := make(map[string]string)
+	for _, env := range os.Environ() {
+		kv := strings.SplitN(env, "=", 2)
+		if len(kv) == 2 {
+			envMap[kv[0]] = kv[1]
+		}
+	}
+
+	containerWorkspaceFolder := cfg.WorkspaceFolder
+	if containerWorkspaceFolder == "" {
+		containerWorkspaceFolder = "/workspace" // default fallback
+	}
+
+	ctx := varsub.SubstitutionContext{
+		Platform:                 "linux",
+		ConfigFile:               cfgPath,
+		LocalWorkspaceFolder:     wsFolder,
+		ContainerWorkspaceFolder: containerWorkspaceFolder,
+		Env:                      envMap,
+	}
+
+	// Substitute simple string fields
+	if cfg.Image != "" {
+		if s, ok := varsub.Substitute(ctx, cfg.Image).(string); ok {
+			cfg.Image = s
+		}
+	}
+	if cfg.Dockerfile != "" {
+		if s, ok := varsub.Substitute(ctx, cfg.Dockerfile).(string); ok {
+			cfg.Dockerfile = s
+		}
+	}
+	if cfg.WorkspaceFolder != "" {
+		if s, ok := varsub.Substitute(ctx, cfg.WorkspaceFolder).(string); ok {
+			cfg.WorkspaceFolder = s
+		}
+	}
+	if cfg.WorkspaceMount != "" {
+		if s, ok := varsub.Substitute(ctx, cfg.WorkspaceMount).(string); ok {
+			cfg.WorkspaceMount = s
+		}
+	}
+	if cfg.RemoteUser != "" {
+		if s, ok := varsub.Substitute(ctx, cfg.RemoteUser).(string); ok {
+			cfg.RemoteUser = s
+		}
+	}
+	if cfg.ContainerUser != "" {
+		if s, ok := varsub.Substitute(ctx, cfg.ContainerUser).(string); ok {
+			cfg.ContainerUser = s
+		}
+	}
+
+	// Substitute OnCreateCommand, PostCreateCommand, etc.
+	if cfg.OnCreateCommand != nil {
+		cfg.OnCreateCommand = varsub.Substitute(ctx, cfg.OnCreateCommand)
+	}
+	if cfg.PostCreateCommand != nil {
+		cfg.PostCreateCommand = varsub.Substitute(ctx, cfg.PostCreateCommand)
+	}
+	if cfg.UpdateContentCommand != nil {
+		cfg.UpdateContentCommand = varsub.Substitute(ctx, cfg.UpdateContentCommand)
+	}
+	if cfg.PostStartCommand != nil {
+		cfg.PostStartCommand = varsub.Substitute(ctx, cfg.PostStartCommand)
+	}
+	if cfg.PostAttachCommand != nil {
+		cfg.PostAttachCommand = varsub.Substitute(ctx, cfg.PostAttachCommand)
+	}
+
+	// Substitute ContainerEnv and RemoteEnv maps
+	if cfg.ContainerEnv != nil {
+		newEnv := make(map[string]string)
+		for k, v := range cfg.ContainerEnv {
+			if s, ok := varsub.Substitute(ctx, v).(string); ok {
+				newEnv[k] = s
+			} else {
+				newEnv[k] = v
+			}
+		}
+		cfg.ContainerEnv = newEnv
+	}
+	if cfg.RemoteEnv != nil {
+		newEnv := make(map[string]string)
+		for k, v := range cfg.RemoteEnv {
+			if s, ok := varsub.Substitute(ctx, v).(string); ok {
+				newEnv[k] = s
+			} else {
+				newEnv[k] = v
+			}
+		}
+		cfg.RemoteEnv = newEnv
+	}
+
+	// Substitute Mounts slice
+	if cfg.Mounts != nil {
+		newMounts := make([]interface{}, len(cfg.Mounts))
+		for i, m := range cfg.Mounts {
+			newMounts[i] = varsub.Substitute(ctx, m)
+		}
+		cfg.Mounts = newMounts
+	}
+}
+

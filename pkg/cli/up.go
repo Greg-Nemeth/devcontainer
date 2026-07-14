@@ -12,15 +12,19 @@ import (
 )
 
 type UpOptions struct {
-	DockerCLI         *docker.CLI
-	WorkspaceFolder   string
-	ContainerName     string
-	BaseImage         string
-	OnCreateCommand   interface{}
-	PostCreateCommand interface{}
-	DockerComposeFile interface{}
-	Service           string
-	ConfigPath        string
+	DockerCLI                *docker.CLI
+	WorkspaceFolder          string
+	ContainerWorkspaceFolder string
+	ContainerName            string
+	BaseImage                string
+	OnCreateCommand          interface{}
+	PostCreateCommand        interface{}
+	DockerComposeFile        interface{}
+	Service                  string
+	ConfigPath               string
+	Mounts                   []string
+	WorkspaceMount           string
+	RemoteUser               string
 }
 
 // CleanProjectName cleans a string to be compatible with Docker Compose project names
@@ -150,6 +154,14 @@ func RunUp(opts UpOptions) error {
 				Env:   make(map[string]string),
 			}
 
+			// Add workspace mount
+			if opts.WorkspaceMount != "" {
+				runOpts.Mounts = append(runOpts.Mounts, opts.WorkspaceMount)
+			}
+
+			// Add other custom mounts
+			runOpts.Mounts = append(runOpts.Mounts, opts.Mounts...)
+
 			// Expose SSH Agent socket if present
 			if sshAuthSock := os.Getenv("SSH_AUTH_SOCK"); sshAuthSock != "" {
 				translatedSSH := utils.TranslateWSLPath(sshAuthSock)
@@ -178,7 +190,7 @@ func RunUp(opts UpOptions) error {
 
 	// 4. Exec OnCreateCommand
 	if cmdArgs, ok := parseCommand(opts.OnCreateCommand); ok {
-		_, err := opts.DockerCLI.ExecCommand(targetContainer, cmdArgs)
+		_, err := opts.DockerCLI.ExecCommandWithUser(targetContainer, "", opts.ContainerWorkspaceFolder, cmdArgs)
 		if err != nil {
 			return fmt.Errorf("failed to execute onCreateCommand: %w", err)
 		}
@@ -186,7 +198,7 @@ func RunUp(opts UpOptions) error {
 
 	// 5. Exec PostCreateCommand
 	if cmdArgs, ok := parseCommand(opts.PostCreateCommand); ok {
-		_, err := opts.DockerCLI.ExecCommand(targetContainer, cmdArgs)
+		_, err := opts.DockerCLI.ExecCommandWithUser(targetContainer, opts.RemoteUser, opts.ContainerWorkspaceFolder, cmdArgs)
 		if err != nil {
 			return fmt.Errorf("failed to execute postCreateCommand: %w", err)
 		}
