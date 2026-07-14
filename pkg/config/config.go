@@ -307,4 +307,3 @@ func (cfg *DevContainerConfig) SubstituteVariables(wsFolder string, cfgPath stri
 		cfg.Mounts = newMounts
 	}
 }
-

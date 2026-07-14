@@ -87,4 +87,3 @@ func (c *CLI) ComposeConfig(composeFiles []string) (string, error) {
 	}
 	return string(output), nil
 }
-
