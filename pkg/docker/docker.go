@@ -1,7 +1,10 @@
 package docker
 
 import (
+	"bytes"
 	"fmt"
+	"io"
+	"os"
 	"os/exec"
 	"sort"
 )
@@ -26,6 +29,15 @@ type RunOptions struct {
 
 func DefaultRunner(path string, args ...string) ([]byte, error) {
 	cmd := exec.Command(path, args...)
+
+	if len(args) > 0 && (args[0] == "build" || args[0] == "pull") {
+		var buf bytes.Buffer
+		cmd.Stdout = io.MultiWriter(os.Stdout, &buf)
+		cmd.Stderr = io.MultiWriter(os.Stderr, &buf)
+		err := cmd.Run()
+		return buf.Bytes(), err
+	}
+
 	return cmd.CombinedOutput()
 }
 

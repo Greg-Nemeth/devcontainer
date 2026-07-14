@@ -73,6 +73,9 @@ func GenerateDockerfile(opts BuildOptions) (string, error) {
 
 func (c *CLI) BuildImage(dockerfilePath, contextDir string, opts BuildOptions) error {
 	args := []string{"build", "-f", dockerfilePath, "-t", opts.TargetImage, contextDir}
-	_, err := c.runner(c.CLIPath, args...)
-	return err
+	output, err := c.runner(c.CLIPath, args...)
+	if err != nil {
+		return fmt.Errorf("build failed: %w (output: %s)", err, string(output))
+	}
+	return nil
 }

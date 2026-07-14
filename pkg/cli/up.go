@@ -148,7 +148,8 @@ func buildFeaturesImage(opts UpOptions, baseImage string) (string, error) {
 			return "", fmt.Errorf("failed to parse feature ref %q: %w", refStr, err)
 		}
 
-		safeID := docker.GetSafeID(ref.ID)
+		fullID := ref.Registry + "/" + ref.Namespace + "/" + ref.ID + ":" + ref.Version
+		safeID := docker.GetSafeID(fullID)
 		featDestDir := filepath.Join(featuresDir, safeID)
 		if err := os.MkdirAll(featDestDir, 0755); err != nil {
 			return "", fmt.Errorf("failed to create directory for feature %s: %w", ref.ID, err)
@@ -224,9 +225,10 @@ func buildFeaturesImage(opts UpOptions, baseImage string) (string, error) {
 	var installOpts []docker.FeatureInstallOptions
 	for _, f := range sortedFeats {
 		ref := featureRefsMap[f.ID]
+		fullID := ref.Registry + "/" + ref.Namespace + "/" + ref.ID + ":" + ref.Version
 		installOpts = append(installOpts, docker.FeatureInstallOptions{
-			ID:          ref.Registry + "/" + ref.Namespace + "/" + ref.ID + ":" + ref.Version,
-			UnpackedDir: filepath.Join(featuresDir, docker.GetSafeID(f.ID)),
+			ID:          fullID,
+			UnpackedDir: filepath.Join(featuresDir, docker.GetSafeID(fullID)),
 			Options:     featureOptionsMap[f.ID],
 		})
 	}
