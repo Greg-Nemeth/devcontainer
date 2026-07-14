@@ -117,6 +117,20 @@ func newRootCommand() *cobra.Command {
 				for _, m := range parsed.Mounts {
 					if s, ok := m.(string); ok {
 						mounts = append(mounts, s)
+					} else if obj, ok := m.(map[string]interface{}); ok {
+						mType := "bind"
+						if t, exists := obj["type"].(string); exists {
+							mType = t
+						}
+						source, _ := obj["source"].(string)
+						target, _ := obj["target"].(string)
+						if source != "" && target != "" {
+							mStr := fmt.Sprintf("type=%s,source=%s,target=%s", mType, source, target)
+							if consistency, exists := obj["consistency"].(string); exists {
+								mStr += fmt.Sprintf(",consistency=%s", consistency)
+							}
+							mounts = append(mounts, mStr)
+						}
 					}
 				}
 
