@@ -2,6 +2,7 @@ package features
 
 import (
 	"archive/tar"
+	"bufio"
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
@@ -219,13 +220,29 @@ func (c *OCIClient) DownloadBlob(ref FeatureRef, digest string, w io.Writer) err
 }
 
 func ExtractTarGz(r io.Reader, dst string) error {
-	gr, err := gzip.NewReader(r)
-	if err != nil {
-		return fmt.Errorf("failed to create gzip reader: %w", err)
-	}
-	defer gr.Close()
+	br := bufio.NewReader(r)
 
-	tr := tar.NewReader(gr)
+	// Peek at the first 2 bytes to check if it's gzip compressed
+	isGzip := false
+	header, err := br.Peek(2)
+	if err == nil && len(header) >= 2 {
+		if header[0] == 0x1f && header[1] == 0x8b {
+			isGzip = true
+		}
+	}
+
+	var tr *tar.Reader
+	if isGzip {
+		gr, err := gzip.NewReader(br)
+		if err != nil {
+			return fmt.Errorf("failed to create gzip reader: %w", err)
+		}
+		defer gr.Close()
+		tr = tar.NewReader(gr)
+	} else {
+		tr = tar.NewReader(br)
+	}
+
 	cleanDst := filepath.Clean(dst)
 
 	for {
