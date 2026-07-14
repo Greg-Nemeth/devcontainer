@@ -28,6 +28,7 @@ type UpOptions struct {
 	WorkspaceMount           string
 	RemoteUser               string
 	Features                 map[string]interface{}
+	ContainerEnv             map[string]string
 }
 
 // CleanProjectName cleans a string to be compatible with Docker Compose project names
@@ -111,28 +112,39 @@ func parseCommand(cmd interface{}) ([]string, bool) {
 	return nil, false
 }
 
-type DevContainerFeatureMetadata struct {
-	ID            string   `json:"id"`
-	DependsOn     []string `json:"dependsOn,omitempty"`
-	InstallsAfter []string `json:"installsAfter,omitempty"`
+func substituteEnvVar(value string, currentEnv map[string]string) string {
+	for k, v := range currentEnv {
+		value = strings.ReplaceAll(value, "${"+k+"}", v)
+		value = strings.ReplaceAll(value, "${containerEnv:"+k+"}", v)
+	}
+	value = strings.ReplaceAll(value, "${PATH}", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+	value = strings.ReplaceAll(value, "${containerEnv:PATH}", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+	return value
 }
 
-func buildFeaturesImage(opts UpOptions, baseImage string) (string, error) {
+type DevContainerFeatureMetadata struct {
+	ID            string            `json:"id"`
+	DependsOn     []string          `json:"dependsOn,omitempty"`
+	InstallsAfter []string          `json:"installsAfter,omitempty"`
+	ContainerEnv  map[string]string `json:"containerEnv,omitempty"`
+}
+
+func buildFeaturesImage(opts UpOptions, baseImage string) (string, map[string]string, error) {
 	if len(opts.Features) == 0 {
-		return baseImage, nil
+		return baseImage, nil, nil
 	}
 
 	fmt.Println("Resolving and downloading features...")
 
 	tmpDir, err := os.MkdirTemp("", "dc-features-build-*")
 	if err != nil {
-		return "", fmt.Errorf("failed to create temp build directory: %w", err)
+		return "", nil, fmt.Errorf("failed to create temp build directory: %w", err)
 	}
 	defer os.RemoveAll(tmpDir)
 
 	featuresDir := filepath.Join(tmpDir, "features")
 	if err := os.MkdirAll(featuresDir, 0755); err != nil {
-		return "", fmt.Errorf("failed to create features directory: %w", err)
+		return "", nil, fmt.Errorf("failed to create features directory: %w", err)
 	}
 
 	client := features.NewOCIClient(nil)
@@ -141,62 +153,65 @@ func buildFeaturesImage(opts UpOptions, baseImage string) (string, error) {
 	var feats []features.Feature
 	featureOptionsMap := make(map[string]map[string]interface{})
 	featureRefsMap := make(map[string]features.FeatureRef)
+	featureEnvMap := make(map[string]map[string]string)
 
 	for refStr, val := range opts.Features {
 		ref, err := features.ParseFeatureRef(refStr)
 		if err != nil {
-			return "", fmt.Errorf("failed to parse feature ref %q: %w", refStr, err)
+			return "", nil, fmt.Errorf("failed to parse feature ref %q: %w", refStr, err)
 		}
 
 		fullID := ref.Registry + "/" + ref.Namespace + "/" + ref.ID + ":" + ref.Version
 		safeID := docker.GetSafeID(fullID)
 		featDestDir := filepath.Join(featuresDir, safeID)
 		if err := os.MkdirAll(featDestDir, 0755); err != nil {
-			return "", fmt.Errorf("failed to create directory for feature %s: %w", ref.ID, err)
+			return "", nil, fmt.Errorf("failed to create directory for feature %s: %w", ref.ID, err)
 		}
 
 		fmt.Printf("Fetching feature manifest for %s...\n", refStr)
 		manifest, err := client.FetchManifest(ref)
 		if err != nil {
-			return "", fmt.Errorf("failed to fetch manifest for feature %s: %w", refStr, err)
+			return "", nil, fmt.Errorf("failed to fetch manifest for feature %s: %w", refStr, err)
 		}
 
 		if len(manifest.Layers) == 0 {
-			return "", fmt.Errorf("no layers found in manifest for feature %s", refStr)
+			return "", nil, fmt.Errorf("no layers found in manifest for feature %s", refStr)
 		}
 
 		tarGzPath := filepath.Join(tmpDir, safeID+".tar.gz")
 		f, err := os.Create(tarGzPath)
 		if err != nil {
-			return "", fmt.Errorf("failed to create tarball path for feature %s: %w", ref.ID, err)
+			return "", nil, fmt.Errorf("failed to create tarball path for feature %s: %w", ref.ID, err)
 		}
 
 		fmt.Printf("Downloading feature blob for %s...\n", refStr)
 		err = client.DownloadBlob(ref, manifest.Layers[0].Digest, f)
 		f.Close()
 		if err != nil {
-			return "", fmt.Errorf("failed to download blob for feature %s: %w", ref.ID, err)
+			return "", nil, fmt.Errorf("failed to download blob for feature %s: %w", ref.ID, err)
 		}
 
 		fRead, err := os.Open(tarGzPath)
 		if err != nil {
-			return "", fmt.Errorf("failed to open downloaded blob for feature %s: %w", ref.ID, err)
+			return "", nil, fmt.Errorf("failed to open downloaded blob for feature %s: %w", ref.ID, err)
 		}
 		err = features.ExtractTarGz(fRead, featDestDir)
 		fRead.Close()
 		if err != nil {
-			return "", fmt.Errorf("failed to extract feature %s: %w", ref.ID, err)
+			return "", nil, fmt.Errorf("failed to extract feature %s: %w", ref.ID, err)
 		}
 
 		// Read devcontainer-feature.json metadata
 		var dependsOn []string
 		var installsAfter []string
+		var containerEnv map[string]string
 		metaPath := filepath.Join(featDestDir, "devcontainer-feature.json")
 		if data, err := os.ReadFile(metaPath); err == nil {
 			var meta DevContainerFeatureMetadata
 			if err := json.Unmarshal(data, &meta); err == nil {
 				dependsOn = meta.DependsOn
 				installsAfter = meta.InstallsAfter
+				containerEnv = meta.ContainerEnv
 			}
 		}
 
@@ -213,12 +228,13 @@ func buildFeaturesImage(opts UpOptions, baseImage string) (string, error) {
 		}
 		featureOptionsMap[ref.ID] = optsMap
 		featureRefsMap[ref.ID] = ref
+		featureEnvMap[ref.ID] = containerEnv
 	}
 
 	// Sort features based on dependencies
 	sortedFeats, err := features.SortFeatures(feats)
 	if err != nil {
-		return "", fmt.Errorf("failed to sort features: %w", err)
+		return "", nil, fmt.Errorf("failed to sort features: %w", err)
 	}
 
 	// Construct Docker BuildOptions Features list in sorted order
@@ -233,6 +249,15 @@ func buildFeaturesImage(opts UpOptions, baseImage string) (string, error) {
 		})
 	}
 
+	// Build sorted features env
+	featureEnv := make(map[string]string)
+	for _, f := range sortedFeats {
+		env := featureEnvMap[f.ID]
+		for k, v := range env {
+			featureEnv[k] = substituteEnvVar(v, featureEnv)
+		}
+	}
+
 	targetImage := opts.ContainerName + "-features"
 
 	buildOpts := docker.BuildOptions{
@@ -244,30 +269,34 @@ func buildFeaturesImage(opts UpOptions, baseImage string) (string, error) {
 	dockerfilePath := filepath.Join(tmpDir, "Dockerfile")
 	dockerfileContent, err := docker.GenerateDockerfile(buildOpts)
 	if err != nil {
-		return "", fmt.Errorf("failed to generate Dockerfile for features: %w", err)
+		return "", nil, fmt.Errorf("failed to generate Dockerfile for features: %w", err)
 	}
 
 	if err := os.WriteFile(dockerfilePath, []byte(dockerfileContent), 0644); err != nil {
-		return "", fmt.Errorf("failed to write Dockerfile for features: %w", err)
+		return "", nil, fmt.Errorf("failed to write Dockerfile for features: %w", err)
 	}
 
 	fmt.Printf("Building features layered image %s...\n", targetImage)
 	err = opts.DockerCLI.BuildImage(dockerfilePath, tmpDir, buildOpts)
 	if err != nil {
-		return "", fmt.Errorf("failed to build features image: %w", err)
+		return "", nil, fmt.Errorf("failed to build features image: %w", err)
 	}
 
-	return targetImage, nil
+	return targetImage, featureEnv, nil
 }
 
 func RunUp(opts UpOptions) error {
 	var targetContainer string
+
+	// Build environment variables map
+	mergedEnv := make(map[string]string)
 
 	if opts.DockerComposeFile != nil && opts.Service != "" {
 		// Resolve compose files
 		resolvedComposeFiles := ResolveComposeFiles(opts.DockerComposeFile, opts.ConfigPath)
 		projectName := CleanProjectName(filepath.Base(opts.WorkspaceFolder))
 
+		var layeredImage string
 		if len(opts.Features) > 0 {
 			// 1. Get the base image for the service from compose file config
 			composeConfig, err := opts.DockerCLI.ComposeConfig(resolvedComposeFiles)
@@ -286,15 +315,28 @@ func RunUp(opts UpOptions) error {
 			}
 
 			// 2. Build features layered image
-			layeredImage, err := buildFeaturesImage(opts, baseImage)
+			var featureEnv map[string]string
+			layeredImage, featureEnv, err = buildFeaturesImage(opts, baseImage)
 			if err != nil {
 				return err
 			}
 
+			for k, v := range featureEnv {
+				mergedEnv[k] = v
+			}
+		}
+
+		// Merge config ContainerEnv
+		for k, v := range opts.ContainerEnv {
+			mergedEnv[k] = substituteEnvVar(v, mergedEnv)
+		}
+
+		if len(opts.Features) > 0 {
 			// 3. Generate compose override file for the layered image
 			overrideOpts := docker.ComposeOverrideOptions{
 				Service: opts.Service,
 				Image:   layeredImage,
+				Env:     mergedEnv,
 			}
 			overrideYAML, err := docker.GenerateComposeOverride(overrideOpts)
 			if err != nil {
@@ -350,11 +392,16 @@ func RunUp(opts UpOptions) error {
 				}
 
 				// Build features image
-				layeredImage, err := buildFeaturesImage(opts, baseImage)
+				var featureEnv map[string]string
+				var layeredImage string
+				layeredImage, featureEnv, err = buildFeaturesImage(opts, baseImage)
 				if err != nil {
 					return err
 				}
 				baseImage = layeredImage
+				for k, v := range featureEnv {
+					mergedEnv[k] = v
+				}
 			} else {
 				// 2. Inspect base image (and pull if not present)
 				_, err = opts.DockerCLI.InspectImage(baseImage)
@@ -366,11 +413,20 @@ func RunUp(opts UpOptions) error {
 				}
 			}
 
+			// Merge config ContainerEnv
+			for k, v := range opts.ContainerEnv {
+				mergedEnv[k] = substituteEnvVar(v, mergedEnv)
+			}
+
 			// 3. Configure RunOptions with mounts and env
 			runOpts := docker.RunOptions{
 				Image: baseImage,
 				Name:  opts.ContainerName,
 				Env:   make(map[string]string),
+			}
+
+			for k, v := range mergedEnv {
+				runOpts.Env[k] = v
 			}
 
 			// Add workspace mount
